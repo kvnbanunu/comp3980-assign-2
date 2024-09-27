@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
     {
         if(opt == 'f')
         {
-            if(sizeof(optarg) != 1)
+            if(strlen(optarg) != 1)
             {
                 fprintf(stderr, "Error: Filter option needs to be a single char\n");
                 print_usage(argv[0]);
@@ -41,21 +41,14 @@ int main(int argc, char *argv[])
         }
     }
 
-    // Checking if there are arguments after the filter option
-    if(optind == argc - 1)
-    {
-        fprintf(stderr, "Error: Message cannot be empty");
-        print_usage(argv[0]);
-    }
-
     if(filter)
     {
-        argind++;
+        argind = optind;
     }
 
-    if(argind == argc - 1)
+    if(argv[argind] == NULL)
     {
-        fprintf(stderr, "Error: Message cannot be empty");
+        fprintf(stderr, "Error: Message cannot be empty\n");
         print_usage(argv[0]);
     }
 
@@ -67,20 +60,27 @@ int main(int argc, char *argv[])
     if(messageSize > 0)
     {
         message = (char *)malloc(messageSize * sizeof(char));
+        if(message == NULL)
+        {
+            fprintf(stderr, "Error: Malloc failed\n");
+            exit(EXIT_FAILURE);
+        }
         strncpy(message, argv[argind], messageSize);
+        strncat(message, " ", messageSize);
     }
     else
     {
-        fprintf(stderr, "Error: Message cannot be empty");
+        fprintf(stderr, "Error: Message cannot be empty\n");
         print_usage(argv[0]);
     }
 
     // Add to message
     for(int i = argind + 1; i < argc; i++)
     {
-        strcat(message, argv[i]);
-        printf("%s\n", message);
+        strncat(message, argv[i], messageSize);
+        strncat(message, " ", messageSize);
     }
+    printf("%s\n", message);
 
     // Testing the filter
     if(filter == NULL)
@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
     }
     else
     {
-        printf("%s", filter);
+        printf("%s\n", filter);
     }
     free(message);
     return EXIT_SUCCESS;
