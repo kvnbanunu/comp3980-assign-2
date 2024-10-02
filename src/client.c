@@ -3,6 +3,7 @@
  * A00955925
  */
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,7 +16,10 @@ int main(int argc, char *argv[])
     int         opt;
     int         argind      = 1;
     size_t      messageSize = 0;
-    const char *filter      = NULL;
+    int         fd;
+    const char *input = "/tmp/assign2fifoIN";
+    // const char *output = "/tmp/assign2fifoOUT";
+    const char *filter = NULL;
     char       *message;
     // Reading the option flags
     while((opt = getopt(argc, argv, "f:")) != -1)
@@ -91,6 +95,16 @@ int main(int argc, char *argv[])
     {
         printf("%s\n", filter);
     }
+
+    fd = open(input, O_WRONLY | O_CLOEXEC, S_IRWXU);
+    if(fd == -1)
+    {
+        free(message);
+        perror("open");
+        return EXIT_FAILURE;
+    }
+    write(fd, message, sizeof(message));
+
     free(message);
     return EXIT_SUCCESS;
 }
