@@ -1,1 +1,2 @@
 client src/client.c include/usage.h src/usage.c include/send.h src/send.c
+server src/server.c include/readfully.h src/readfully.c
