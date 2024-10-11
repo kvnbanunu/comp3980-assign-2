@@ -3,25 +3,40 @@
  * A00955925
  */
 
+#include "../include/send.h"
+#include "../include/usage.h"
+#include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/unistd.h>
 #include <unistd.h>
 
-_Noreturn void print_usage(const char *prog_name);
+#define FIFO_IN "/tmp/assign2_in"
+#define FIFO_OUT "/tmp/assign2_out"
 
 int main(int argc, char *argv[])
 {
+    char       *buf;
+    const char *message;
     int         opt;
-    int         argind      = 1;
-    size_t      messageSize = 0;
-    int         fd;
-    const char *input = "/tmp/assign2fifoIN";
-    // const char *output = "/tmp/assign2fifoOUT";
+    int         fdin;
+    int         fdout;
+    int         err;
+    size_t      msgLength;
+    int         numDigits;
+    size_t      msgSize;
+    ssize_t     result;
     const char *filter = NULL;
-    char       *message;
-    // Reading the option flags
+
+    bool close_fdin  = false;
+    bool close_fdout = false;
+
+    errno = 0;
+
     while((opt = getopt(argc, argv, "f:")) != -1)
     {
         if(opt == 'f')
@@ -30,87 +45,90 @@ int main(int argc, char *argv[])
             {
                 fprintf(stderr, "Error: Filter option needs to be a single char\n");
                 print_usage(argv[0]);
+                goto done;
             }
-            filter = optarg;
-            if(!(strcmp(filter, "U") == 0 || strcmp(filter, "L") == 0 || strcmp(filter, "N") == 0))
+            if(!(strcmp(optarg, "U") == 0 || strcmp(optarg, "L") == 0 || strcmp(optarg, "N") == 0))
             {
                 fprintf(stderr, "Error: Invalid filter option %s\n", optarg);
                 print_usage(argv[0]);
+                goto done;
             }
+            filter = optarg;
         }
         else
         {
-            fprintf(stderr, "Invalid flag %d\n", opt);
+            fprintf(stderr, "Error: Invalid option flag %d\n", opt);
             print_usage(argv[0]);
+            goto done;
         }
     }
 
-    if(filter)
+    if(optind >= argc)
     {
-        argind = optind;
-    }
-
-    if(argv[argind] == NULL)
-    {
-        fprintf(stderr, "Error: Message cannot be empty\n");
+        fprintf(stderr, "Error: Unexpected arguments\n");
         print_usage(argv[0]);
+        goto done;
     }
 
-    for(int i = argind; i < argc; i++)
+    message   = argv[optind];
+    msgLength = strlen(message);
+    numDigits = snprintf(NULL, 0, "%zu", msgLength);
+    msgSize   = msgLength + (size_t)numDigits + 1;
+    buf       = (char *)malloc(msgSize);
+    snprintf(buf, msgSize + 1, "%zu%s%s", msgLength, filter, message);
+
+    fdin       = open(FIFO_IN, O_WRONLY | O_CLOEXEC, S_IRWXU);
+    close_fdin = true;
+    if(fdin == -1)
     {
-        messageSize += strlen(argv[i]) + 1;
+        fprintf(stderr, "Error opening input FIFO\n");
+        goto cleanup;
+    }
+    result = send(fdin, buf, sizeof(buf), &err);
+    if(result == -1)
+    {
+        perror("write");
+        goto cleanup;
     }
 
-    if(messageSize > 0)
+    // Now waiting for server to write to FIFO_OUT
+
+    fdout       = open(FIFO_OUT, O_RDONLY | O_CLOEXEC);
+    close_fdout = true;
+    if(fdout == -1)
     {
-        message = (char *)malloc(messageSize * sizeof(char));
-        if(message == NULL)
+        fprintf(stderr, "Error opening output FIFO\n");
+        goto cleanup;
+    }
+
+    // clear the buffer
+    memset(buf, 0, msgSize);
+
+    // read from the fifo
+    do
+    {
+        result = read(fdout, buf, msgSize);
+        if(result < 0)
         {
-            fprintf(stderr, "Error: Malloc failed\n");
-            exit(EXIT_FAILURE);
+            fprintf(stderr, "Error reading output FIFO\n");
+            goto cleanup;
         }
-        strncpy(message, argv[argind], messageSize);
-        strncat(message, " ", messageSize);
-    }
-    else
+    } while(result != 0);
+
+    printf("Processed string: %s\n", buf);
+
+    if(close_fdout)
     {
-        fprintf(stderr, "Error: Message cannot be empty\n");
-        print_usage(argv[0]);
+        close(fdout);
     }
 
-    // Add to message
-    for(int i = argind + 1; i < argc; i++)
+cleanup:
+    free(buf);
+    if(close_fdin)
     {
-        strncat(message, argv[i], messageSize);
-        strncat(message, " ", messageSize);
-    }
-    printf("%s\n", message);
-
-    // Testing the filter
-    if(filter == NULL)
-    {
-        printf("filter is null\n");
-    }
-    else
-    {
-        printf("%s\n", filter);
+        close(fdin);
     }
 
-    fd = open(input, O_WRONLY | O_CLOEXEC, S_IRWXU);
-    if(fd == -1)
-    {
-        free(message);
-        perror("open");
-        return EXIT_FAILURE;
-    }
-    write(fd, message, sizeof(message));
-
-    free(message);
+done:
     return EXIT_SUCCESS;
-}
-
-_Noreturn void print_usage(const char *prog_name)
-{
-    fprintf(stderr, "Usage: %s [-f filter] [message]\n\t-f\tU | uppercase\n\t\tL | lowercase\n\t\tN | null\n", prog_name);
-    exit(EXIT_FAILURE);
 }
