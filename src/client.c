@@ -14,7 +14,7 @@
 
 #define FIFO_IN "/tmp/assign2_in"
 #define FIFO_OUT "/tmp/assign2_out"
-#define MAX_ARGS 4 // [program, opt, filter, message]
+#define MAX_ARGS 4    // [program, opt, filter, message]
 
 void *send(void *arg);
 
@@ -104,7 +104,7 @@ int main(int argc, char *argv[])
 
     // allocating thread args
     thread_data.fd     = fdin;
-    thread_data.filter = (char *)malloc(2); // Just one char + null terminator
+    thread_data.filter = (char *)malloc(2);    // Just one char + null terminator
     if(thread_data.filter == NULL)
     {
         perror("malloc");

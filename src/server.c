@@ -15,7 +15,6 @@
 
 #define FIFO_IN "/tmp/assign2_in"
 #define FIFO_OUT "/tmp/assign2_out"
-#define PERMISSIONS 0666
 #define BUFFER_SIZE 128
 
 void *process_req(void *arg);
@@ -27,15 +26,12 @@ int main(void)
     pthread_t thread;
     signal(SIGINT, sig_handler);
 
-    mkfifo(FIFO_IN, PERMISSIONS);
-    mkfifo(FIFO_OUT, PERMISSIONS);
-
     printf("Server listening for requests...\n");
 
     while(1)
     {
         fdin = open(FIFO_IN, O_RDONLY | O_CLOEXEC);
-        if(fdin == -1 && SIGINT == 2) // This stops the loop from closing after each request
+        if(fdin == -1 && SIGINT == 2)    // This stops the loop from closing after each request
         {
             printf("\nSIGINT Received. Shutting down Server.\n");
             goto done;
@@ -71,12 +67,12 @@ void sig_handler(int sig)
 void *process_req(void *arg)
 {
     int  fdout;
-    int  fdin = *((int *)arg); // Using the same fdin as main()
+    int  fdin = *((int *)arg);    // Using the same fdin as main()
     char buf[BUFFER_SIZE];
 
     const char *filter;
     char       *message;
-    char       *state; // Needed for strtok_r
+    char       *state;    // Needed for strtok_r
     ssize_t     bytesRead = read(fdin, buf, BUFFER_SIZE - 1);
     if(bytesRead == -1)
     {
