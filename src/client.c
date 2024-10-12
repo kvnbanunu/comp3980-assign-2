@@ -14,6 +14,7 @@
 
 #define FIFO_IN "/tmp/assign2_in"
 #define FIFO_OUT "/tmp/assign2_out"
+#define MAX_ARGS 4 // [program, opt, filter, message]
 
 void *send(void *arg);
 
@@ -79,6 +80,13 @@ int main(int argc, char *argv[])
         goto done;
     }
 
+    if(argc > MAX_ARGS)
+    {
+        fprintf(stderr, "Error: Too many arguments\n");
+        print_usage(argv[0]);
+        goto done;
+    }
+
     message = argv[optind];
     if(message == NULL)
     {
@@ -94,8 +102,9 @@ int main(int argc, char *argv[])
         goto done;
     }
 
+    // allocating thread args
     thread_data.fd     = fdin;
-    thread_data.filter = (char *)malloc(2);
+    thread_data.filter = (char *)malloc(2); // Just one char + null terminator
     if(thread_data.filter == NULL)
     {
         perror("malloc");
@@ -111,6 +120,7 @@ int main(int argc, char *argv[])
     strncpy(thread_data.filter, filter, 1);
     strncpy(thread_data.message, message, strlen(message));
 
+    // spawn new thread to write to send to server (fifo)
     if(pthread_create(&thread, NULL, send, (void *)&thread_data) != 0)
     {
         fprintf(stderr, "Error creating thread\n");
@@ -126,6 +136,7 @@ int main(int argc, char *argv[])
         goto cleanup;
     }
 
+    // The size should be the same as the message sent
     msgReceived = (char *)malloc(strlen(message) + 1);
 
     bytesRead = read(fdout, msgReceived, strlen(message) + 1);
@@ -155,6 +166,7 @@ void *send(void *arg)
     size_t             fullLen;
     const thread_args *data = (thread_args *)arg;
 
+    // Finding the full length of the message to send
     fullLen = (size_t)snprintf(NULL, 0, "%s\n%s", data->filter, data->message) + 1;
     buf     = (char *)malloc(fullLen);
     snprintf(buf, fullLen, "%s\n%s", data->filter, data->message);
