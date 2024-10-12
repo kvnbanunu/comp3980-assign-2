@@ -155,9 +155,9 @@ void *send(void *arg)
     size_t             fullLen;
     const thread_args *data = (thread_args *)arg;
 
-    fullLen = (size_t)snprintf(NULL, 0, "%s:%s", data->filter, data->message) + 1;
+    fullLen = (size_t)snprintf(NULL, 0, "%s\n%s", data->filter, data->message) + 1;
     buf     = (char *)malloc(fullLen);
-    snprintf(buf, fullLen, "%s:%s", data->filter, data->message);
+    snprintf(buf, fullLen, "%s\n%s", data->filter, data->message);
 
     fdin = data->fd;
     if(write(fdin, buf, fullLen - 1) == -1)

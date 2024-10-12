@@ -3,7 +3,7 @@
  * A00955925
  */
 
-#include <ctype.h>
+#include "../include/filter.h"
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
@@ -19,7 +19,6 @@
 #define BUFFER_SIZE 128
 
 void *process_req(void *arg);
-int   filter_message(const char *filter, char *message, size_t msgSize);
 void  sig_handler(int sig);
 
 int main(void)
@@ -68,45 +67,6 @@ void sig_handler(int sig)
     unlink(FIFO_OUT);
 }
 
-int filter_message(const char *filter, char *message, size_t msgSize)
-{
-    if(filter == NULL)
-    {
-        fprintf(stderr, "Error NULL filter\n");
-        return -1;
-    }
-
-    // uppercase
-    if(strcmp(filter, "U") == 0)
-    {
-        for(size_t i = 0; i < msgSize && message[i] != '\0'; i++)
-        {
-            message[i] = (char)toupper((unsigned char)message[i]);
-        }
-        return 0;
-    }
-
-    // lowercase
-    if(strcmp(filter, "L") == 0)
-    {
-        for(size_t i = 0; i < msgSize && message[i] != '\0'; i++)
-        {
-            message[i] = (char)tolower((unsigned char)message[i]);
-        }
-        return 0;
-    }
-
-    // do nothing
-    if(strcmp(filter, "N") == 0)
-    {
-        return 0;
-    }
-
-    // should not go here
-    fprintf(stderr, "Error applying filter\n");
-    return -1;
-}
-
 void *process_req(void *arg)
 {
     int  fdout;
@@ -137,8 +97,8 @@ void *process_req(void *arg)
     }
 
     // Split the argument and the message
-    filter  = strtok_r(buf, ":", &state);
-    message = strtok_r(NULL, ":", &state);
+    filter  = strtok_r(buf, "\n", &state);
+    message = strtok_r(NULL, "\n", &state);
 
     // Compare the strings and apply the filter
     if(filter_message(filter, message, BUFFER_SIZE) == -1)
