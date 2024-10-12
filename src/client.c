@@ -3,56 +3,44 @@
  * A00955925
  */
 
-#include "../include/send.h"
 #include "../include/usage.h"
-#include <errno.h>
 #include <fcntl.h>
-#include <stdbool.h>
-#include <stdint.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/unistd.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define FIFO_IN "/tmp/assign2_in"
 #define FIFO_OUT "/tmp/assign2_out"
 
+void *send(void *arg);
+
+typedef struct
+{
+    int   fd;
+    char *filter;
+    char *message;
+} thread_args;
+
 int main(int argc, char *argv[])
 {
-    char       *buf;
-    const char *message;
-    int         opt;
-    int         fdin;
-    int         fdout;
-    int         err;
-    size_t      msgLength;
-    int         numDigits;
-    size_t      msgSize;
-    ssize_t     result;
-    const char *filter = NULL;
+    int fdin;
+    int fdout;
+    int opt;
 
-    bool close_fdin  = false;
-    bool close_fdout = false;
+    ssize_t     bytesRead;
+    pthread_t   thread;
+    thread_args thread_data;
 
-    errno = 0;
-
+    char       *msgReceived;
+    const char *filter  = NULL;
+    const char *message = NULL;
     while((opt = getopt(argc, argv, "f:")) != -1)
     {
         if(opt == 'f')
         {
-            if(strlen(optarg) != 1)
-            {
-                fprintf(stderr, "Error: Filter option needs to be a single char\n");
-                print_usage(argv[0]);
-                goto done;
-            }
-            if(!(strcmp(optarg, "U") == 0 || strcmp(optarg, "L") == 0 || strcmp(optarg, "N") == 0))
-            {
-                fprintf(stderr, "Error: Invalid filter option %s\n", optarg);
-                print_usage(argv[0]);
-                goto done;
-            }
             filter = optarg;
         }
         else
@@ -63,6 +51,27 @@ int main(int argc, char *argv[])
         }
     }
 
+    if(filter == NULL)
+    {
+        fprintf(stderr, "Error: Filter cannot be null\n");
+        print_usage(argv[0]);
+        goto done;
+    }
+
+    if(strlen(filter) != 1)
+    {
+        fprintf(stderr, "Error: Filter option needs to be a single char\n");
+        print_usage(argv[0]);
+        goto done;
+    }
+
+    if(!(strcmp(filter, "U") == 0 || strcmp(filter, "L") == 0 || strcmp(filter, "N") == 0))
+    {
+        fprintf(stderr, "Error: Invalid filter option %s\n", filter);
+        print_usage(argv[0]);
+        goto done;
+    }
+
     if(optind >= argc)
     {
         fprintf(stderr, "Error: Unexpected arguments\n");
@@ -70,65 +79,95 @@ int main(int argc, char *argv[])
         goto done;
     }
 
-    message   = argv[optind];
-    msgLength = strlen(message);
-    numDigits = snprintf(NULL, 0, "%zu", msgLength);
-    msgSize   = msgLength + (size_t)numDigits + 1;
-    buf       = (char *)malloc(msgSize);
-    snprintf(buf, msgSize + 1, "%zu%s%s", msgLength, filter, message);
+    message = argv[optind];
+    if(message == NULL)
+    {
+        fprintf(stderr, "Error: Message cannot be null\n");
+        print_usage(argv[0]);
+        goto done;
+    }
 
-    fdin       = open(FIFO_IN, O_WRONLY | O_CLOEXEC, S_IRWXU);
-    close_fdin = true;
+    fdin = open(FIFO_IN, O_WRONLY | O_CLOEXEC);
     if(fdin == -1)
     {
         fprintf(stderr, "Error opening input FIFO\n");
-        goto cleanup;
+        goto done;
     }
-    result = send(fdin, buf, sizeof(buf), &err);
-    if(result == -1)
+
+    thread_data.fd     = fdin;
+    thread_data.filter = (char *)malloc(2);
+    if(thread_data.filter == NULL)
     {
-        perror("write");
+        perror("malloc");
+        goto done;
+    }
+    thread_data.message = (char *)malloc(strlen(message) + 1);
+    if(thread_data.message == NULL)
+    {
+        perror("malloc");
+        free(thread_data.filter);
+        goto done;
+    }
+    strncpy(thread_data.filter, filter, 1);
+    strncpy(thread_data.message, message, strlen(message));
+
+    if(pthread_create(&thread, NULL, send, (void *)&thread_data) != 0)
+    {
+        fprintf(stderr, "Error creating thread\n");
         goto cleanup;
     }
 
-    // Now waiting for server to write to FIFO_OUT
+    pthread_join(thread, NULL);
 
-    fdout       = open(FIFO_OUT, O_RDONLY | O_CLOEXEC);
-    close_fdout = true;
+    fdout = open(FIFO_OUT, O_RDONLY | O_CLOEXEC);
     if(fdout == -1)
     {
         fprintf(stderr, "Error opening output FIFO\n");
         goto cleanup;
     }
 
-    // clear the buffer
-    memset(buf, 0, msgSize);
+    msgReceived = (char *)malloc(strlen(message) + 1);
 
-    // read from the fifo
-    do
+    bytesRead = read(fdout, msgReceived, strlen(message) + 1);
+    if(bytesRead == -1)
     {
-        result = read(fdout, buf, msgSize);
-        if(result < 0)
-        {
-            fprintf(stderr, "Error reading output FIFO\n");
-            goto cleanup;
-        }
-    } while(result != 0);
-
-    printf("Processed string: %s\n", buf);
-
-    if(close_fdout)
-    {
+        fprintf(stderr, "Error reading from server\n");
         close(fdout);
+        goto cleanup;
     }
+
+    printf("Message Received from Server: %s\n", msgReceived);
+    close(fdout);
 
 cleanup:
-    free(buf);
-    if(close_fdin)
-    {
-        close(fdin);
-    }
+    free(thread_data.filter);
+    free(thread_data.message);
+    close(fdin);
 
 done:
     return EXIT_SUCCESS;
+}
+
+void *send(void *arg)
+{
+    int                fdin;
+    char              *buf;
+    size_t             fullLen;
+    const thread_args *data = (thread_args *)arg;
+
+    fullLen = (size_t)snprintf(NULL, 0, "%s:%s", data->filter, data->message) + 1;
+    buf     = (char *)malloc(fullLen);
+    snprintf(buf, fullLen, "%s:%s", data->filter, data->message);
+
+    fdin = data->fd;
+    if(write(fdin, buf, fullLen - 1) == -1)
+    {
+        fprintf(stderr, "Error writing to input FIFO\n");
+        free(buf);
+        close(fdin);
+        pthread_exit(NULL);
+    }
+    free(buf);
+    close(fdin);
+    return NULL;
 }

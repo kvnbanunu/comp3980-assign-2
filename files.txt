@@ -1,2 +1,2 @@
-srv src/srv.c
-clnt src/clnt.c
+server src/server.c
+client src/client.c src/usage.c include/usage.h

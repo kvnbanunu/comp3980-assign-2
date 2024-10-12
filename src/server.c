@@ -1,167 +1,165 @@
-#include "../include/readfully.h"
+/*
+ * Kevin Nguyen
+ * A00955925
+ */
+
 #include <ctype.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
+
 #define FIFO_IN "/tmp/assign2_in"
 #define FIFO_OUT "/tmp/assign2_out"
-#define BUF_SIZE 128
-
-typedef struct
-{
-    bool run;
-} server_state_t;
+#define PERMISSIONS 0666
+#define BUFFER_SIZE 128
 
 void *process_req(void *arg);
-void  handle_signal(int sig, siginfo_t *siginfo, void *context);
+int   filter_message(const char *filter, char *message, size_t msgSize);
+void  sig_handler(int sig);
 
 int main(void)
 {
-    int              fdin;
-    int              fdout;
-    char            *buf;
-    int              err;
-    pthread_t        thread;
-    server_state_t   state = {0};
-    struct sigaction sa;
+    int       fdin;
+    pthread_t thread;
+    signal(SIGINT, sig_handler);
 
-    // open fifos
-    fdin = open(FIFO_IN, O_RDONLY | O_CLOEXEC);
-    if(fdin == -1)
+    mkfifo(FIFO_IN, PERMISSIONS);
+    mkfifo(FIFO_OUT, PERMISSIONS);
+
+    printf("Server listening for requests...\n");
+
+    while(1)
     {
-        perror("open input fifo");
-        goto done;
-    }
-
-    fdout = open(FIFO_OUT, O_WRONLY | O_CLOEXEC, S_IRWXU);
-    if(fdout == -1)
-    {
-        perror("open output fifo");
-        close(fdin);
-        goto done;
-    }
-    state.run = true;
-
-    // register signal handler for SIGINT (CTRL-C)
-#if defined(__clang__)
-    #pragma clang diagnostic push
-    #pragma clang diagnostic ignored "-Wdisabled-macro-expansion"
-#endif
-    sa.sa_sigaction = handle_signal;
-#if defined(__clang__)
-    #pragma clang diagnostic pop
-#endif
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_SIGINFO;
-    if(sigaction(SIGINT, &sa, NULL) == -1)
-    {
-        perror("sigaction");
-        goto cleanup;
-    }
-
-    printf("Server listening...\n");
-
-    while(state.run)
-    {
-        ssize_t bytes_read;
-        buf = (char *)malloc(BUF_SIZE);
-        if(buf == NULL)
+        fdin = open(FIFO_IN, O_RDONLY | O_CLOEXEC);
+        if(fdin == -1 && SIGINT == 2)
         {
-            perror("malloc");
+            printf("\nSIGINT Received. Shutting down Server.\n");
+            goto done;
+        }
+
+        if(pthread_create(&thread, NULL, process_req, (void *)&fdin) != 0)
+        {
+            fprintf(stderr, "Error creating thread\n");
             goto cleanup;
         }
 
-        // clear buffer for each iteration
-        memset(buf, 0, BUF_SIZE);
-
-        // ensure server reads the full message
-        bytes_read = read_fully(fdin, buf, BUF_SIZE, &err);
-        if(bytes_read > 0)
-        {
-            // create a new thread to handle each new client req
-            char *request = strdup(buf);
-            pthread_create(&thread, NULL, process_req, request);
-            pthread_detach(thread);
-        }
-        // free for the next iteration.
-        free(buf);
+        pthread_join(thread, NULL);
+        close(fdin);
     }
 
 cleanup:
     close(fdin);
-    close(fdout);
+    unlink(FIFO_IN);
+    unlink(FIFO_OUT);
 
 done:
     return EXIT_SUCCESS;
 }
 
-// parses filter and message from buffer
-// applies filter to message
-// attempts to fully write the message to FIFO_OUT
-void *process_req(void *arg)
+void sig_handler(int sig)
 {
-    char *request = (char *)arg;
-    int   fdout;
+    (void)sig;
+    unlink(FIFO_IN);
+    unlink(FIFO_OUT);
+}
 
-    // filter:message
-    const char *filter  = strtok_r(request, ":", &request);
-    char       *message = strtok_r(NULL, ":", &request);
+int filter_message(const char *filter, char *message, size_t msgSize)
+{
+    if(filter == NULL)
+    {
+        fprintf(stderr, "Error NULL filter\n");
+        return -1;
+    }
 
+    // uppercase
     if(strcmp(filter, "U") == 0)
     {
-        for(int i = 0; message[i]; i++)
+        for(size_t i = 0; i < msgSize && message[i] != '\0'; i++)
         {
-            message[i] = (char)toupper(message[i]);
+            message[i] = (char)toupper((unsigned char)message[i]);
         }
-    }
-    else if(strcmp(filter, "L") == 0)
-    {
-        for(int i = 0; message[i]; i++)
-        {
-            message[i] = (char)tolower(message[i]);
-        }
+        return 0;
     }
 
-    fdout = open(FIFO_OUT, O_WRONLY | O_CLOEXEC, S_IRWXU);
-    if(fdout != -1)
+    // lowercase
+    if(strcmp(filter, "L") == 0)
     {
-        size_t bytes_written = 0;
-        size_t count         = strlen(message);
-        while(bytes_written < count)
+        for(size_t i = 0; i < msgSize && message[i] != '\0'; i++)
         {
-            ssize_t result = write(fdout, (const char *)message + bytes_written, count - bytes_written);
-            if(result == -1)
-            {
-                perror("partial write");
-                goto done;
-            }
-            bytes_written += (size_t)result;
+            message[i] = (char)tolower((unsigned char)message[i]);
         }
+        return 0;
     }
 
-done:
-    free(request);
+    // do nothing
+    if(strcmp(filter, "N") == 0)
+    {
+        return 0;
+    }
+
+    // should not go here
+    fprintf(stderr, "Error applying filter\n");
+    return -1;
+}
+
+void *process_req(void *arg)
+{
+    int  fdout;
+    int  fdin = *((int *)arg);    // Cast and dereference the argument
+    char buf[BUFFER_SIZE];
+
+    const char *filter;
+    char       *message;
+    char       *state;
+    ssize_t     bytesRead = read(fdin, buf, BUFFER_SIZE - 1);
+    if(bytesRead == -1)
+    {
+        fprintf(stderr, "Error: couldn't read from FIFO");
+        pthread_exit(NULL);
+    }
+
+    printf("Request received. Processing...\n");
+
+    // Null terminate the end of the buffer
+    buf[bytesRead] = '\0';
+
+    // Open the server fd
+    fdout = open(FIFO_OUT, O_WRONLY | O_CLOEXEC);
+    if(fdout == -1)
+    {
+        fprintf(stderr, "Error opening server file descriptor\n");
+        pthread_exit(NULL);
+    }
+
+    // Split the argument and the message
+    filter  = strtok_r(buf, ":", &state);
+    message = strtok_r(NULL, ":", &state);
+
+    // Compare the strings and apply the filter
+    if(filter_message(filter, message, BUFFER_SIZE) == -1)
+    {
+        fprintf(stderr, "Error: Filter is invalid");
+        close(fdout);
+        pthread_exit(NULL);
+    }
+
+    printf("Request processed. Sending response.\n");
+
+    // Write back to the other server
+    if(write(fdout, message, BUFFER_SIZE - 1) == -1)
+    {
+        fprintf(stderr, "Error trying to write to server FIFO");
+        close(fdout);
+        pthread_exit(NULL);
+    }
+
+    printf("Response sent\n");
+
+    close(fdout);
     return NULL;
 }
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-parameter"
-
-// Signal handler for SIGINT
-// using server state context
-void handle_signal(int sig, siginfo_t *siginfo, void *context)
-{
-    if(sig == SIGINT)
-    {
-        server_state_t *state = (server_state_t *)context;
-        state->run            = false;
-        printf("SIGINT Received. Shutting down server...\n");
-    }
-}
-
-#pragma GCC diagnostic pop
